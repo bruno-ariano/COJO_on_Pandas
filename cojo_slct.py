@@ -10,7 +10,7 @@ import scipy.stats
 import os
 import subprocess as sp
 
-
+#In case of multicollinearity problems
 #def calc_VIF(x):
 #  vif= pd.DataFrame()
 #  vif["VIF"]=[variance_inflation_factor(x.values,i) for i in range(x.shape[1])]
