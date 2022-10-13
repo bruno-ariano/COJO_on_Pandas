@@ -10,14 +10,12 @@ import scipy.stats
 import os
 import subprocess as sp
 
-#In case of multicollinearity problems
 #def calc_VIF(x):
 #  vif= pd.DataFrame()
 #  vif["VIF"]=[variance_inflation_factor(x.values,i) for i in range(x.shape[1])]
 #  vif['variables']=x.columns
 
 spark = SparkSession.builder.config("spark.some.config.option", "some-value").master("local").getOrCreate()
-
 
 def find_median(values_list):
   median = np.median(values_list)
@@ -27,17 +25,17 @@ med_find=f.udf(find_median,t.FloatType())
 
 def select_best_SNP(df, variants_conditioned):
   df = df.join(variants_conditioned, on = ["SNP"], how = "left_anti")
-  best_SNP_pvalue = df.agg({"pval": 'min'}).collect()[0][0]
-  best_SNP_pos = df.filter(f.col("pval") == best_SNP_pvalue).select("pos").collect()[0][0]
+  R = df.head(1)[0]
+  best_SNP_pos = R["pos"]
+  best_SNP_ID = R["SNP"]
+  best_SNP_pvalue = R["pval"]
   best_SNP_pos = int(best_SNP_pos)
-  best_SNP_ID = df.filter(f.col("pval") == best_SNP_pvalue).select("SNP").collect()[0][0]
   best_SNP_conditioned = df.filter(f.col("pval") == best_SNP_pvalue).select("SNP")
   variants_conditioned = variants_conditioned.union(best_SNP_conditioned)
   return [best_SNP_ID, best_SNP_pos, best_SNP_pvalue, variants_conditioned]
-  
-  
+
 def create_windows_plink(df, best_SNP_pos):
-  df_wind = df.filter((f.col("pos") < best_SNP_pos + 1e6) & (f.col("pos") > best_SNP_pos - 1e6))
+  df_wind = df.filter((f.col("pos") < best_SNP_pos + 3e6) & (f.col("pos") > best_SNP_pos - 3e6))
   df_wind.select("SNP").coalesce(1).write.mode("overwrite").option("header", False).csv("test_data/variants.csv")
   return (df_wind)
 
@@ -57,9 +55,8 @@ def join_sumstat(SNP, D_neff_tmp, LD_matrix, var_y, betas):
   res_data = spark.createDataFrame(res_data)
   return res_data
 
-
 #establish spark connection
-p_value_threshold = 1e-5
+p_value_threshold = 5e-8
 max_iter = 100
 var_y = 1.3
 
@@ -74,7 +71,6 @@ schema_bim = t.StructType([
     t.StructField("A2",t.StringType(),True), 
   ])
 
-
 schema_freq = t.StructType([ 
     t.StructField("CHR",t.StringType(),True), 
     t.StructField("SNP",t.StringType(),True), 
@@ -84,27 +80,29 @@ schema_freq = t.StructType([
     t.StructField("POS",t.StringType(),True), 
   ])
 
-
 bim_uk = spark.read.format("csv").load("test_data/ukb_v3_chr1.downsampled10k.reshaped.bim", sep = ",", schema = schema_bim)
 freq_uk = spark.read.format("csv").load("test_data/ukb_v3_chr1.downsampled10k.reshaped.frq", sep = ",", schema = schema_freq)
 freq_uk = freq_uk.select("SNP", "MAF")
 bim_uk_freq = bim_uk.join(freq_uk, on = ["SNP"])
 
-
 sumstat = spark.read.format("parquet").load("test_data/GCST002222.parquet")
 sumstat = (sumstat
           .withColumn("SNP", f.concat_ws(":", f.col("chrom"), f.col("pos"), f.col("ref"), f.col("alt")))
-          .select("SNP","beta","se","pval","n_total")
+          .withColumn("MAF_sumstat", f.when(f.col("eaf")>0.5, 1-f.col("eaf")).otherwise(f.col("eaf")))
+          .select("SNP","beta","MAF_sumstat","se","pval","n_total")
 )
 
 bim_uk_freq_filtered_SNP = bim_uk_freq.join(sumstat, on = ["SNP"], how = "inner")
 bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.withColumn('D_neff', 2*f.col("MAF")*(1-f.col("MAF")) * f.col("n_total"))
 bim_uk_freq_filtered_SNP = (bim_uk_freq_filtered_SNP
-                         .withColumn("beta_cond", f.col("beta"))
-                         .withColumn("pval_cond", f.col("pval"))
-                         .withColumn("se_cond", f.col("se"))
-                         .select("SNP" ,"pos","MAF","D_neff" ,"beta", "beta_cond", "se", "se_cond", "pval", "pval_cond"))
-  
+                        .withColumn("beta_cond", f.col("beta"))
+                        .withColumn("pval_cond", f.col("pval"))
+                        .withColumn("se_cond", f.col("se"))
+                        .withColumn("diff_af", f.abs(f.col("MAF_sumstat")-f.col("MAF")))
+                        .filter(f.col("diff_af")<0.2)
+                        .select("SNP" ,"pos","MAF","D_neff" ,"beta", "beta_cond", "se", "se_cond", "pval", "pval_cond"))
+
+bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.sort(f.col("pval"))
 iters = 1
 last_p = 0
 
@@ -113,11 +111,14 @@ emptyRDD = spark.sparkContext.emptyRDD()
 schema_conditioned_SNP = t.StructType([
   t.StructField('SNP', t.StringType(), True),
   ])
+
 variants_conditioned = spark.createDataFrame(emptyRDD,schema_conditioned_SNP)
+
+variants_collinear = spark.createDataFrame(emptyRDD,schema_conditioned_SNP)
 
 best_SNP_ID, best_SNP_pos, best_SNP_pvalue, variants_conditioned =  select_best_SNP(bim_uk_freq_filtered_SNP, variants_conditioned)
 bim_uk_freq_filtered_SNP_bestpval_wind = create_windows_plink(bim_uk_freq_filtered_SNP, best_SNP_pos)
-bim_uk_freq_filtered_SNP_bestpval_wind = bim_uk_freq_filtered_SNP.filter((f.col("pos") < best_SNP_pos + 1e6) & (f.col("pos") > best_SNP_pos - 1e6))
+bim_uk_freq_filtered_SNP_bestpval_wind = bim_uk_freq_filtered_SNP.filter((f.col("pos") < best_SNP_pos +3e6) & (f.col("pos") > best_SNP_pos - 3e6))
 bfile = "/Users/ba13/Desktop/Open_Target_Genetics/creation_pipeline/COJO_on_SPARK/test_data/ukb_v3_chr1.downsampled10k"
 out_ld = "/Users/ba13/Desktop/Open_Target_Genetics/creation_pipeline/COJO_on_SPARK/test_data/LD_SNP"
 variants = "/Users/ba13/Desktop/Open_Target_Genetics/creation_pipeline/COJO_on_SPARK/test_data/variants.csv/*.csv"
@@ -129,6 +130,7 @@ cmd_bim_extract = [
         '--allow-extra-chr',
         '--out', out_ld
     ]
+
 cmd_str = ' '.join([str(x) for x in cmd_bim_extract])
 
 sp.call(cmd_str, shell=True)
@@ -149,7 +151,6 @@ ld_matrix = np.loadtxt('/Users/ba13/Desktop/Open_Target_Genetics/creation_pipeli
 #bim_uk_freq_filtered_SNP_bestpval_wind = bim_uk_freq_filtered_SNP_bestpval_wind.join(snp_matrix_nozero, on = ["SNP"])
 
 #bim_uk_freq_filtered_SNP_bestpval_wind.show()
-  
 
 bim_uk_freq_filtered_SNP_bestpval_wind_pd = bim_uk_freq_filtered_SNP_bestpval_wind.toPandas()
 betas = np.array(bim_uk_freq_filtered_SNP_bestpval_wind_pd["beta_cond"])
@@ -173,39 +174,54 @@ while(best_SNP_pvalue < p_value_threshold and iters < max_iter):
     #print(LD_matrix)
     #betas = bim_uk_freq_filtered_SNP_bestpval_wind.select("beta_cond").toPandas()
     #D_neffs = np.array(bim_uk_freq_filtered_SNP_bestpval_wind_pd["D_neff"].values)
+    print(bim_uk_freq_filtered_SNP_bestpval_wind_pd.shape)
     for index, row in bim_uk_freq_filtered_SNP_bestpval_wind_pd.iterrows():
+      print(index)
       if row["SNP"] != best_SNP_ID:
         best_SNPs_cond_tmp = np.append(best_SNPs_cond, index)
         betas_slct = (betas[best_SNPs_cond_tmp])
         D_neff_slct = D_neffs[best_SNPs_cond_tmp]
         ld_matrix_slct = ld_matrix[best_SNPs_cond_tmp, : ][: ,best_SNPs_cond_tmp]
-        if np.any(ld_matrix_slct>0.9):
-          continue
+        out = ld_matrix[best_SNPs_cond_tmp, : ][: ,best_SNPs_cond_tmp]
+        np.fill_diagonal(out,0)
         #ld_matrix_slct = np.matrix([[1,ld_filtered_SNP_R2], [ld_filtered_SNP_R2, 1]]).astype(float)  
         SNP_slct = SNPs[best_SNPs_cond_tmp]
+        if np.any(out>0.9):
+          bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.filter(f.col("SNP")!=row["SNP"])
+          continue
         sum_stat_filtered_SNP_tmp = join_sumstat(SNP_slct, D_neff_slct, ld_matrix_slct, var_y, betas_slct)
-        bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.join(sum_stat_filtered_SNP_tmp, on = ["SNP"], how = "left")
-    #res_data = res_data.union(joint_results)
-    
+        sum_stat_filtered_SNP_tmp = (sum_stat_filtered_SNP_tmp
+                                    .withColumnRenamed("beta_cond", "beta_cond_merge")
+                                    .withColumnRenamed("pval_cond", "pval_cond_merge")
+                                    .withColumnRenamed("se_cond", "se_cond_merge")
+                                    .select("SNP", "beta_cond_merge", "pval_cond_merge", "se_cond_merge")                           
+        )
+        bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.join(sum_stat_filtered_SNP_tmp, on = ["SNP"], how = "outer")
+        bim_uk_freq_filtered_SNP = (bim_uk_freq_filtered_SNP
+                                    .withColumn("beta_cond", f.when(f.col("beta_cond_merge").isNull(),f.col("beta_cond")).otherwise(f.col("beta_cond_merge")))
+                                    .withColumn("pval_cond", f.when(f.col("pval_cond_merge").isNull(),f.col("pval_cond")).otherwise(f.col("pval_cond_merge")))
+                                    .withColumn("se_cond", f.when(f.col("se_cond_merge").isNull(),f.col("se_cond")).otherwise(f.col("se_cond_merge")))
+                                    .drop("beta_cond_merge")
+                                    .drop("pval_cond_merge")
+                                    .drop("se_cond_merge")
+        )
     print("end of cycle")
     best_SNP_ID, best_SNP_pos, best_SNP_pvalue, variants_conditioned =  select_best_SNP(bim_uk_freq_filtered_SNP, variants_conditioned)
     print(best_SNP_ID)
     bim_uk_freq_filtered_SNP_bestpval_wind = create_windows_plink(bim_uk_freq_filtered_SNP, best_SNP_pos)
-    bim_uk_freq_filtered_SNP_bestpval_wind = bim_uk_freq_filtered_SNP.filter((f.col("pos") < best_SNP_pos + 1e6) & (f.col("pos") > best_SNP_pos - 1e6))
+    bim_uk_freq_filtered_SNP_bestpval_wind = bim_uk_freq_filtered_SNP.filter((f.col("pos") < best_SNP_pos + 3e6) & (f.col("pos") > best_SNP_pos - 3e6))
     #bim_uk_freq_filtered_SNP_bestpval_wind = bim_uk_freq_filtered_SNP_bestpval_wind.union(bim_uk_freq_filtered_SNP.filter(f.col("row_index") == best_SNPs_cond))
     cmd_str = ' '.join([str(x) for x in cmd_bim_extract])
     sp.call(cmd_str, shell=True)
     ld_matrix = np.loadtxt('/Users/ba13/Desktop/Open_Target_Genetics/creation_pipeline/COJO_on_SPARK/test_data/LD_SNP.ld')
-
     bim_uk_freq_filtered_SNP_bestpval_wind_pd = bim_uk_freq_filtered_SNP_bestpval_wind.toPandas()
     betas = np.array(bim_uk_freq_filtered_SNP_bestpval_wind_pd["beta_cond"])
     D_neffs = np.array(bim_uk_freq_filtered_SNP_bestpval_wind_pd["D_neff"])
     SNPs = np.array(bim_uk_freq_filtered_SNP_bestpval_wind_pd["SNP"])
-    
     top_SNP_index = np.where(SNPs == best_SNP_ID)[0][0]
     best_SNPs_cond = np.append(best_SNPs_cond, top_SNP_index)
     iters = iters+1
     print(iters)
-bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.filter(f.col("pval")< 5e-5)
-bim_uk_freq_filtered_SNP.repartition(1).write.format("csv").save("test_data/cojo_out/GCST002222_cojo_on_spark")
 
+bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.filter(f.col("pval")< 5e-8)
+bim_uk_freq_filtered_SNP.repartition(1).write.format("csv").save("test_data/cojo_out/GCST002222_cojo_on_spark")
