@@ -236,7 +236,6 @@ while(best_SNP_pvalue < p_value_threshold and iters < max_iter):
     best_SNP_ID, best_SNP_pos, best_SNP_pvalue, variants_conditioned =  select_best_SNP(bim_uk_freq_filtered_SNP, variants_conditioned)
     print(best_SNP_ID)
     bim_uk_freq_filtered_SNP_bestpval_wind = create_windows_plink(bim_uk_freq_filtered_SNP, best_SNP_pos)
-    bim_uk_freq_filtered_SNP_bestpval_wind = bim_uk_freq_filtered_SNP.filter((f.col("pos") < best_SNP_pos + 2e6) & (f.col("pos") > best_SNP_pos - 2e6))
     #bim_uk_freq_filtered_SNP_bestpval_wind = bim_uk_freq_filtered_SNP_bestpval_wind.union(bim_uk_freq_filtered_SNP.filter(f.col("row_index") == best_SNPs_cond))
     cmd_str = ' '.join([str(x) for x in cmd_bim_extract])
     sp.call(cmd_str, shell=True)
