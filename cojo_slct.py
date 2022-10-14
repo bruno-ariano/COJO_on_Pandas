@@ -9,6 +9,8 @@ import pandas as pd
 import scipy.stats
 import os
 import subprocess as sp
+import dask.array as da
+
 
 #def calc_VIF(x):
 #  vif= pd.DataFrame()
@@ -53,7 +55,7 @@ def join_sumstat(SNP, D_neff_tmp, LD_matrix, var_y, betas):
   d = {"SNP": SNP, "beta_cond_tmp": new_betas, "se_cond_tmp" : new_se, "pval_cond_tmp":new_pval }
   res_data = pd.DataFrame.from_dict(d)
   #res_data = spark.createDataFrame(res_data)
-  return res_data[1:]
+  return res_data[res_data["SNP"]==SNP[0]]
 
 #establish spark connection
 p_value_threshold = 5e-8
@@ -183,8 +185,8 @@ while(best_SNP_pvalue < p_value_threshold and iters < max_iter):
     #print(LD_matrix)
     #betas = bim_uk_freq_filtered_SNP_bestpval_wind.select("beta_cond").toPandas()
     #D_neffs = np.array(bim_uk_freq_filtered_SNP_bestpval_wind_pd["D_neff"].values)
-    print(bim_uk_freq_filtered_SNP_bestpval_wind_pd.shape)
     for index, row in bim_uk_freq_filtered_SNP_bestpval_wind_pd.iterrows():
+      print(index)
       if row["SNP"] != best_SNP_ID:
         best_SNPs_cond_tmp = np.append(best_SNPs_cond, index)
         betas_slct = (betas[best_SNPs_cond_tmp])
@@ -198,6 +200,8 @@ while(best_SNP_pvalue < p_value_threshold and iters < max_iter):
           bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.filter(f.col("SNP")!=row["SNP"])
           continue
         sum_stat_filtered_SNP_tmp = join_sumstat(SNP_slct, D_neff_slct, ld_matrix_slct, var_y, betas_slct)
+        betas[best_SNPs_cond_tmp][0] = sum_stat_filtered_SNP_tmp["beta_cond_tmp"]
+        
         #snp_cycle_conditioned = pd.concat([snp_cycle_conditioned, sum_stat_filtered_SNP_tmp])
 
         #sum_stat_filtered_SNP_tmp = (sum_stat_filtered_SNP_tmp
@@ -220,9 +224,9 @@ while(best_SNP_pvalue < p_value_threshold and iters < max_iter):
     
     print("end of cycle")
     bim_uk_freq_filtered_SNP = (bim_uk_freq_filtered_SNP
-                                .withColumn("beta_cond", f.when(f.col("SNP") == best_SNP_ID, sum_stat_filtered_SNP_tmp["beta_cond_tmp"][1]))
-                                .withColumn("pval_cond", f.when(f.col("SNP") == best_SNP_ID, sum_stat_filtered_SNP_tmp["pval_cond_tmp"][1]))
-                                .withColumn("se_cond", f.when(f.col("SNP") == best_SNP_ID, sum_stat_filtered_SNP_tmp["se_cond_tmp"][1]))
+                                .withColumn("beta_cond", f.when(f.col("SNP") == best_SNP_ID, sum_stat_filtered_SNP_tmp["beta_cond_tmp"][0]))
+                                .withColumn("pval_cond", f.when(f.col("SNP") == best_SNP_ID, sum_stat_filtered_SNP_tmp["pval_cond_tmp"][0]))
+                                .withColumn("se_cond", f.when(f.col("SNP") == best_SNP_ID, sum_stat_filtered_SNP_tmp["se_cond_tmp"][0]))
                           )
     #bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.join(snp_cycle_conditioned, on = ["SNP"], how = "outer")
     #bim_uk_freq_filtered_SNP = (bim_uk_freq_filtered_SNP
@@ -236,16 +240,19 @@ while(best_SNP_pvalue < p_value_threshold and iters < max_iter):
     best_SNP_ID, best_SNP_pos, best_SNP_pvalue, variants_conditioned =  select_best_SNP(bim_uk_freq_filtered_SNP, variants_conditioned)
     print(best_SNP_ID)
     bim_uk_freq_filtered_SNP_bestpval_wind = create_windows_plink(bim_uk_freq_filtered_SNP, best_SNP_pos)
-    #bim_uk_freq_filtered_SNP_bestpval_wind = bim_uk_freq_filtered_SNP_bestpval_wind.union(bim_uk_freq_filtered_SNP.filter(f.col("row_index") == best_SNPs_cond))
     cmd_str = ' '.join([str(x) for x in cmd_bim_extract])
     sp.call(cmd_str, shell=True)
     ld_matrix = np.loadtxt('/Users/ba13/Desktop/Open_Target_Genetics/creation_pipeline/COJO_on_SPARK/test_data/LD_SNP.ld')
     bim_uk_freq_filtered_SNP_bestpval_wind_pd = bim_uk_freq_filtered_SNP_bestpval_wind.toPandas()
+    
+    #betas = da.array(bim_uk_freq_filtered_SNP_bestpval_wind.select("beta_cond").collect()).reshape(-1)
+    #D_neffs = da.array(bim_uk_freq_filtered_SNP_bestpval_wind.select("D_neff").collect()).reshape(-1)
+    #SNPs = da.array(bim_uk_freq_filtered_SNP_bestpval_wind.select("SNP").collect()).reshape(-1)
     betas = np.array(bim_uk_freq_filtered_SNP_bestpval_wind_pd["beta_cond"])
     D_neffs = np.array(bim_uk_freq_filtered_SNP_bestpval_wind_pd["D_neff"])
     SNPs = np.array(bim_uk_freq_filtered_SNP_bestpval_wind_pd["SNP"])
     top_SNP_index = np.where(SNPs == best_SNP_ID)[0][0]
-    best_SNPs_cond = np.append(best_SNPs_cond, top_SNP_index)
+    best_SNPs_cond = np.append(top_SNP_index, best_SNPs_cond)
     iters = iters+1
     print(iters)
 
