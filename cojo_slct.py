@@ -24,7 +24,7 @@ def find_median(values_list):
 med_find=f.udf(find_median,t.FloatType())
 
 def select_best_SNP(df, variants_conditioned):
-  df = df.join(variants_conditioned, on = ["SNP"], how = "left_anti")
+  df = df.join(f.broadcast(variants_conditioned), on = ["SNP"], how = "left_anti")
   R = df.head(1)[0]
   best_SNP_pos = R["pos"]
   best_SNP_ID = R["SNP"]
@@ -35,7 +35,7 @@ def select_best_SNP(df, variants_conditioned):
   return [best_SNP_ID, best_SNP_pos, best_SNP_pvalue, variants_conditioned]
 
 def create_windows_plink(df, best_SNP_pos):
-  df_wind = df.filter((f.col("pos") < best_SNP_pos + 3e6) & (f.col("pos") > best_SNP_pos - 3e6))
+  df_wind = df.filter((f.col("pos") < best_SNP_pos + 2e6) & (f.col("pos") > best_SNP_pos - 2e6))
   df_wind.select("SNP").coalesce(1).write.mode("overwrite").option("header", False).csv("test_data/variants.csv")
   return (df_wind)
 
@@ -50,10 +50,10 @@ def join_sumstat(SNP, D_neff_tmp, LD_matrix, var_y, betas):
   new_z = (np.abs(new_betas/new_se))
   new_pval = scipy.stats.norm.sf(abs(new_z))*2
   #new_pval = (np.abs(new_betas/new_se))
-  d = {"SNP": SNP,"beta": betas, "beta_cond": new_betas, "se_cond" : new_se, "pval_cond":new_pval }
+  d = {"SNP": SNP, "beta_cond_tmp": new_betas, "se_cond_tmp" : new_se, "pval_cond_tmp":new_pval }
   res_data = pd.DataFrame.from_dict(d)
-  res_data = spark.createDataFrame(res_data)
-  return res_data
+  #res_data = spark.createDataFrame(res_data)
+  return res_data[1:]
 
 #establish spark connection
 p_value_threshold = 5e-8
@@ -114,11 +114,9 @@ schema_conditioned_SNP = t.StructType([
 
 variants_conditioned = spark.createDataFrame(emptyRDD,schema_conditioned_SNP)
 
-variants_collinear = spark.createDataFrame(emptyRDD,schema_conditioned_SNP)
-
 best_SNP_ID, best_SNP_pos, best_SNP_pvalue, variants_conditioned =  select_best_SNP(bim_uk_freq_filtered_SNP, variants_conditioned)
 bim_uk_freq_filtered_SNP_bestpval_wind = create_windows_plink(bim_uk_freq_filtered_SNP, best_SNP_pos)
-bim_uk_freq_filtered_SNP_bestpval_wind = bim_uk_freq_filtered_SNP.filter((f.col("pos") < best_SNP_pos +3e6) & (f.col("pos") > best_SNP_pos - 3e6))
+bim_uk_freq_filtered_SNP_bestpval_wind = bim_uk_freq_filtered_SNP.filter((f.col("pos") < best_SNP_pos +2e6) & (f.col("pos") > best_SNP_pos - 2e6))
 bfile = "/Users/ba13/Desktop/Open_Target_Genetics/creation_pipeline/COJO_on_SPARK/test_data/ukb_v3_chr1.downsampled10k"
 out_ld = "/Users/ba13/Desktop/Open_Target_Genetics/creation_pipeline/COJO_on_SPARK/test_data/LD_SNP"
 variants = "/Users/ba13/Desktop/Open_Target_Genetics/creation_pipeline/COJO_on_SPARK/test_data/variants.csv/*.csv"
@@ -165,6 +163,17 @@ best_SNPs_cond = np.append(best_SNPs_cond, top_SNP_index)
 print("starting cycle")
 max_iter = 10
 
+#emptyRDD = spark.sparkContext.emptyRDD()
+#schema_conditioned_SNP = t.StructType([
+#  t.StructField('SNP', t.StringType(), True),
+#  t.StructField('beta_cond_tmp', t.StringType(), True),
+#  t.StructField('se_cond_tmp', t.StringType(), True),
+#  t.StructField('pval_cond_tmp', t.StringType(), True),
+  
+#  ])
+
+#snp_cycle_conditioned = spark.createDataFrame(emptyRDD,schema_conditioned_SNP)
+snp_cycle_conditioned = pd.DataFrame(columns=["SNP", "beta_cond_tmp", "se_cond_tmp", "pval_cond_tmp"])
 
 while(best_SNP_pvalue < p_value_threshold and iters < max_iter):
     t = 1
@@ -176,7 +185,6 @@ while(best_SNP_pvalue < p_value_threshold and iters < max_iter):
     #D_neffs = np.array(bim_uk_freq_filtered_SNP_bestpval_wind_pd["D_neff"].values)
     print(bim_uk_freq_filtered_SNP_bestpval_wind_pd.shape)
     for index, row in bim_uk_freq_filtered_SNP_bestpval_wind_pd.iterrows():
-      print(index)
       if row["SNP"] != best_SNP_ID:
         best_SNPs_cond_tmp = np.append(best_SNPs_cond, index)
         betas_slct = (betas[best_SNPs_cond_tmp])
@@ -190,26 +198,45 @@ while(best_SNP_pvalue < p_value_threshold and iters < max_iter):
           bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.filter(f.col("SNP")!=row["SNP"])
           continue
         sum_stat_filtered_SNP_tmp = join_sumstat(SNP_slct, D_neff_slct, ld_matrix_slct, var_y, betas_slct)
-        sum_stat_filtered_SNP_tmp = (sum_stat_filtered_SNP_tmp
-                                    .withColumnRenamed("beta_cond", "beta_cond_merge")
-                                    .withColumnRenamed("pval_cond", "pval_cond_merge")
-                                    .withColumnRenamed("se_cond", "se_cond_merge")
-                                    .select("SNP", "beta_cond_merge", "pval_cond_merge", "se_cond_merge")                           
-        )
-        bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.join(sum_stat_filtered_SNP_tmp, on = ["SNP"], how = "outer")
-        bim_uk_freq_filtered_SNP = (bim_uk_freq_filtered_SNP
-                                    .withColumn("beta_cond", f.when(f.col("beta_cond_merge").isNull(),f.col("beta_cond")).otherwise(f.col("beta_cond_merge")))
-                                    .withColumn("pval_cond", f.when(f.col("pval_cond_merge").isNull(),f.col("pval_cond")).otherwise(f.col("pval_cond_merge")))
-                                    .withColumn("se_cond", f.when(f.col("se_cond_merge").isNull(),f.col("se_cond")).otherwise(f.col("se_cond_merge")))
-                                    .drop("beta_cond_merge")
-                                    .drop("pval_cond_merge")
-                                    .drop("se_cond_merge")
-        )
+        #snp_cycle_conditioned = pd.concat([snp_cycle_conditioned, sum_stat_filtered_SNP_tmp])
+
+        #sum_stat_filtered_SNP_tmp = (sum_stat_filtered_SNP_tmp
+        #                            .withColumnRenamed("beta_cond", "beta_cond_tmp")
+        #                            .withColumnRenamed("pval_cond", "pval_cond_tmp")
+        #                            .withColumnRenamed("se_cond", "se_cond_tmp")
+        #                            .filter(f.col("SNP") == row["SNP"])
+        #                            .select("SNP", "beta_cond_tmp", "pval_cond_tmp", "se_cond_tmp")                           
+        #)
+        
+        #bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.join(sum_stat_filtered_SNP_tmp, on = ["SNP"], how = "outer")
+        #bim_uk_freq_filtered_SNP = (bim_uk_freq_filtered_SNP
+        #                            .withColumn("beta_cond_merge", f.when(f.col("beta_cond_tmp").isNull(),f.col("beta_cond")).otherwise(f.col("beta_cond_tmp")))
+        #                            .withColumn("pval_cond_merge", f.when(f.col("pval_cond_tmp").isNull(),f.col("pval_cond")).otherwise(f.col("pval_cond_tmp")))
+        #                            .withColumn("se_cond_merge", f.when(f.col("se_cond_tmp").isNull(),f.col("se_cond")).otherwise(f.col("se_cond_tmp")))
+        #                            .drop(sum_stat_filtered_SNP_tmp.beta_cond_tmp)
+        #                            .drop(sum_stat_filtered_SNP_tmp.pval_cond_tmp)
+        #                            .drop(sum_stat_filtered_SNP_tmp.se_cond_tmp)
+        #)
+    
     print("end of cycle")
+    bim_uk_freq_filtered_SNP = (bim_uk_freq_filtered_SNP
+                                .withColumn("beta_cond", f.when(f.col("SNP") == best_SNP_ID, sum_stat_filtered_SNP_tmp["beta_cond_tmp"][1]))
+                                .withColumn("pval_cond", f.when(f.col("SNP") == best_SNP_ID, sum_stat_filtered_SNP_tmp["pval_cond_tmp"][1]))
+                                .withColumn("se_cond", f.when(f.col("SNP") == best_SNP_ID, sum_stat_filtered_SNP_tmp["se_cond_tmp"][1]))
+                          )
+    #bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.join(snp_cycle_conditioned, on = ["SNP"], how = "outer")
+    #bim_uk_freq_filtered_SNP = (bim_uk_freq_filtered_SNP
+    #                               .withColumn("beta_cond_merge", f.when(f.col("beta_cond_tmp").isNull(),f.col("beta_cond")).otherwise(f.col("beta_cond_tmp")))
+    #                                .withColumn("pval_cond_merge", f.when(f.col("pval_cond_tmp").isNull(),f.col("pval_cond")).otherwise(f.col("pval_cond_tmp")))
+    #                                .withColumn("se_cond_merge", f.when(f.col("se_cond_tmp").isNull(),f.col("se_cond")).otherwise(f.col("se_cond_tmp")))
+    #                                .drop(sum_stat_filtered_SNP_tmp.beta_cond_tmp)
+    #                                .drop(sum_stat_filtered_SNP_tmp.pval_cond_tmp)
+    #                                .drop(sum_stat_filtered_SNP_tmp.se_cond_tmp)
+    #    )
     best_SNP_ID, best_SNP_pos, best_SNP_pvalue, variants_conditioned =  select_best_SNP(bim_uk_freq_filtered_SNP, variants_conditioned)
     print(best_SNP_ID)
     bim_uk_freq_filtered_SNP_bestpval_wind = create_windows_plink(bim_uk_freq_filtered_SNP, best_SNP_pos)
-    bim_uk_freq_filtered_SNP_bestpval_wind = bim_uk_freq_filtered_SNP.filter((f.col("pos") < best_SNP_pos + 3e6) & (f.col("pos") > best_SNP_pos - 3e6))
+    bim_uk_freq_filtered_SNP_bestpval_wind = bim_uk_freq_filtered_SNP.filter((f.col("pos") < best_SNP_pos + 2e6) & (f.col("pos") > best_SNP_pos - 2e6))
     #bim_uk_freq_filtered_SNP_bestpval_wind = bim_uk_freq_filtered_SNP_bestpval_wind.union(bim_uk_freq_filtered_SNP.filter(f.col("row_index") == best_SNPs_cond))
     cmd_str = ' '.join([str(x) for x in cmd_bim_extract])
     sp.call(cmd_str, shell=True)
@@ -222,6 +249,7 @@ while(best_SNP_pvalue < p_value_threshold and iters < max_iter):
     best_SNPs_cond = np.append(best_SNPs_cond, top_SNP_index)
     iters = iters+1
     print(iters)
+
 
 bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.filter(f.col("pval")< 5e-8)
 bim_uk_freq_filtered_SNP.repartition(1).write.format("csv").save("test_data/cojo_out/GCST002222_cojo_on_spark")
