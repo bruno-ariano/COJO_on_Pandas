@@ -229,21 +229,8 @@ sp.call(cmd_str, shell=True)
 ld_matrix = np.loadtxt('/Users/ba13/Desktop/Open_Target_Genetics/creation_pipeline/COJO_on_SPARK/test_data_single_window/LD_SNP_test.ld')
 ld_matrix_names = pd.DataFrame(ld_matrix, index=SNP_name_LD["SNP"], columns=SNP_name_LD["SNP"])
 
-# I select the SNP with the lowest p-value making sure that it wasn't selected previously.
-# By being the sorted we could simply take the first row of the DF, although I prefer using the 
-# function that I have created
-
-### Technically this is the first cycle of the analysis
-
 variants_conditioned = pd.DataFrame({'SNP' : []})
 
-
-
-
-
-  d = {"SNP": SNP, "beta_cond_tmp": ls_sumstat, "se_cond_tmp" : ls_se_sumstat, "pval_cond_tmp":new_pval }
-  res_data = pd.DataFrame.from_dict(d)
-  return res_data[res_data["SNP"]==SNP[0]]
 
 
 #Either the minimum p-value is reached or the iteration reach a maximum
