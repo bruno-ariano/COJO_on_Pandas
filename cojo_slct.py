@@ -1,6 +1,6 @@
 ###
 # Bruno Ariano; bruno.ariano.87@gmail.com
-# Join analysis using GCTA COJO concept; 2022
+# Joint analysis using GCTA COJO concept; 2022
 # This program is in pandas and need to be converted in pyspark
 
 from pyspark.sql import SparkSession
