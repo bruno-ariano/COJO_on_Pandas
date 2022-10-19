@@ -82,7 +82,7 @@ def select_best_SNP(df, variants_conditioned):
 
 #########
 # This is the first verion of the joint analysis.
-# This version follow mostly what's in the paper and also indicated in the coco and sojo packages.
+# This version follow mostly what's in the paper and also indicated in the coco(https://github.com/theboocock/coco/blob/master/R/joint_algebra.R) and sojo(https://github.com/zhenin/sojo/blob/master/R/sojo.R)packages.
 
 def join_sumstat(SNP, D_neff_tmp, LD_matrix, var_y, betas):
   # Here I assume Dw * WW' * Dw explained in the paper is the LD matrix as suggested in the coco and sojo packages
