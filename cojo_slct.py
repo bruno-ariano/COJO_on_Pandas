@@ -54,7 +54,7 @@ def select_best_SNP(df, variants_conditioned):
   key_diff = set(df.SNP).difference(variants_conditioned.SNP)
   where_diff = df.SNP.isin(key_diff)
   df = df[where_diff]
-  df_lowestp = df.loc[df["pval"] == np.min(df["pval"])]
+  df_lowestp = df.loc[df["pval_cond"] == np.min(df["pval_cond"])]
   #df = df.join(f.broadcast(variants_conditioned), on = ["SNP"], how = "left_anti")
   #R = df.head(1)[0]
   best_SNP_pos = df_lowestp["pos"]
