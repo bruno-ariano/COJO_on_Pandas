@@ -59,9 +59,9 @@ def select_best_SNP(df, variants_conditioned):
   #R = df.head(1)[0]
   best_SNP_pos = df_lowestp["pos"]
   best_SNP_ID = df_lowestp["SNP"]
-  best_SNP_pvalue = df_lowestp["pval"]
+  best_SNP_pvalue = df_lowestp["pval_cond"]
   best_SNP_pos = int(best_SNP_pos)
-  #best_SNP_conditioned = df.filter(f.col("pval") == best_SNP_pvalue).select("SNP")
+  #best_SNP_conditioned = df.filter(f.col("pval_cond") == best_SNP_pvalue).select("SNP")
   #variants_conditioned = variants_conditioned.union(best_SNP_conditioned)
   variants_conditioned = pd.concat([variants_conditioned,df_lowestp])
   return [best_SNP_ID, best_SNP_pos, best_SNP_pvalue, variants_conditioned]
@@ -245,10 +245,10 @@ while(np.any(best_SNP_pvalue<p_value_threshold) and iters < max_iter):
         
       best_SNPs_cond_tmp = np.append(row["SNP"], best_SNPs_cond)
       select_rows = bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"].isin(best_SNPs_cond_tmp)]
-      betas_slct = np.array(select_rows["beta"])
+      betas_slct = np.array(select_rows["beta_cond"])
       D_neff_slct = np.array(select_rows["D_neff"])
       MAF_select = np.array(select_rows["MAF"])
-      SE_select = np.array(select_rows["se"])
+      SE_select = np.array(select_rows["se_cond"])
       N_slct = np.array(select_rows["n_total"])
       ld_matrix_slct_col = ld_matrix_names[best_SNPs_cond_tmp]
       ld_matrix_slct = ld_matrix_slct_col.loc[ld_matrix_slct_col.index.isin(best_SNPs_cond_tmp)].values
@@ -293,5 +293,5 @@ best_SNP_ID, best_SNP_pos, best_SNP_pvalue, variants_conditioned =  select_best_
 best_SNPs_cond = np.empty((0,1), str)
 best_SNPs_cond = np.append(best_SNPs_cond, best_SNP_ID)
 
-bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.filter(f.col("pval")< 5e-8)
+bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.filter(f.col("pval_cond")< 5e-8)
 bim_uk_freq_filtered_SNP.repartition(1).write.format("csv").save("test_data/cojo_out/GCST002222_cojo_on_spark")
