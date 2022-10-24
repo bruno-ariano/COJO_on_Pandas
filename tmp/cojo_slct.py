@@ -36,60 +36,33 @@ def find_median(values_list):
 
 med_find=f.udf(find_median,t.FloatType())
 
-#########
-# This function is used only for calculating the phenotype variance and the effective population size(though in general pops in GWAS are panmitic).
-# Here I assume this is constant at 1.3. The real values looks like are not
-# distant from this default.
-
+# This function is to calculate the phenotypic variance and the eff. pop. size
 def phenotype_and_neff_compute(data_ref):
   #Note: Below equation 8 in the cojo paper, is how we estimate the trait variance. \cr
   #   y'y = D_j S_j^2 (n-1) + D_j B_j^2 \cr
-  #   Trait variance taken as the median of the equation above
-  
+  #   Trait variance
   vars=data_ref["var_af"] *(data_ref["n_total"]) * data_ref["se"]**2  +  data_ref["var_af"] * (data_ref["n_total"]) * data_ref["beta"]**2
   vars = (find_median(vars/(data_ref["n_total"]-1)))
-  #Here is stored the function to calculate the phenotypic variance. 
-  # In my case I assume this to be constant at 1.3 given previous calculation
-  # I have made and what I have observed in other repositories
   data_ref["neff"] = (vars - data_ref["var_af"] *data_ref["beta"]**2)/(data_ref["var_af"] *data_ref["se"]**2)
   return(vars,data_ref)
 
-#########
-# This function find the SNP with the lowest p-value in a dataset.
-# Given that the dataset is sorted before I just take the first row
-# after filtering for SNPs already conditioned
-
+#Select SNP with the lowest conditioned p-value
 def select_best_SNP(df, variants_conditioned):
   key_diff = set(df.SNP).difference(variants_conditioned.SNP)
   where_diff = df.SNP.isin(key_diff)
   df = df[where_diff]
   df_lowestp = df.loc[df["pval_cond"] == np.min(df["pval_cond"])]
+  
+  #if multiple variants are present with same p-value I select the first one
   if(df_lowestp.shape[0]>1):
       df_lowestp = df_lowestp.head(1)
-  #df = df.join(f.broadcast(variants_conditioned), on = ["SNP"], how = "left_anti")
-  #R = df.head(1)[0]
+
   best_SNP_pos = df_lowestp["pos"]
   best_SNP_ID = df_lowestp["SNP"]
   best_SNP_pvalue = df_lowestp["pval_cond"]
   best_SNP_pos = int(best_SNP_pos)
-  #best_SNP_conditioned = df.filter(f.col("pval") == best_SNP_pvalue).select("SNP")
-  #variants_conditioned = variants_conditioned.union(best_SNP_conditioned)
   variants_conditioned = pd.concat([variants_conditioned,df_lowestp])
   return [best_SNP_ID, best_SNP_pos, best_SNP_pvalue, variants_conditioned]
-
-
-##########
-# This function create a window of 4Mb (+/- 2Mb) around the selected variant
-# Moreover it write the sets of variant that will later be used by plink to 
-# calculate the LD matrix
-
-#def create_windows_plink(df, best_SNP_pos):
-#  df["pos"] = df["pos"].astype(int)
-#  df_wind = df.loc[(df["pos"] > best_SNP_pos - 2e6) &  (df["pos"] < best_SNP_pos + 2e6)]
-#  df_wind_SNP = df_wind["SNP"]
-#  return (df_wind)
-#  df_wind_SNP.to_csv("test_data_single_window/variants_plink.csv", sep = " ", header = False)
-
 
 #########
 # This is the first verion of the joint analysis.
@@ -107,28 +80,6 @@ def join_sumstat(SNP,hwe_diag_outside, LD_matrix, var_y, betas):
   new_z = (np.abs(new_betas/new_se))
   new_pval = scipy.stats.norm.sf(abs(new_z))*2
   d = {"SNP": SNP, "beta_cond_tmp": new_betas, "se_cond_tmp" : new_se, "pval_cond_tmp":new_pval }
-  res_data = pd.DataFrame.from_dict(d)
-  return res_data[res_data["SNP"]==SNP[0]]
-
-
-
-### This is the second version of the joint algorithm. This follow the guideline reported here (https://www.mv.helsinki.fi/home/mjxpirin/GWAS_course/material/GWAS9.pdf)
-def join_sumstat2(SNP, MAF, LD_matrix, betas, N, SE):
-  MAF = MAF.astype(float)
-  sc = np.sqrt(2*MAF*(1-MAF))
-  b = betas*sc
-  #This equation is reported here (https://www.karger.com/Article/FullText/513303#ref4) as a way to compute the OLS.
-  ls_sumstat = scipy.linalg.solve(LD_matrix, b) #computes scaled lambdas as R^-1 * b.s
-  sigma2_J_sumstat = find_median((b**2) + (N*sc*2*SE**2)) - np.dot(b.T, ls_sumstat)
-  if np.any((sigma2_J_sumstat/N * np.diag(scipy.linalg.inv(LD_matrix))) <0):
-    return "negative variance"
-  ls_se_sumstat = np.sqrt(sigma2_J_sumstat/N * np.diag(scipy.linalg.inv(LD_matrix))) #SEs of scaled lambdas 
-  ls_sumstat = (ls_sumstat/sc)
-  ls_se_sumstat = (ls_se_sumstat/sc)
-  
-  new_z = (np.abs(ls_sumstat/ls_se_sumstat))
-  new_pval = scipy.stats.norm.sf(abs(new_z))*2
-  d = {"SNP": SNP, "beta_cond_tmp": ls_sumstat, "se_cond_tmp" : ls_se_sumstat, "pval_cond_tmp":new_pval}
   res_data = pd.DataFrame.from_dict(d)
   return res_data[res_data["SNP"]==SNP[0]]
 
@@ -180,12 +131,6 @@ bim_uk_freq_filtered_SNP = bim_uk_freq.join(sumstat, on = ["SNP"], how = "inner"
 
 ### Various filtering and calculation of parameters
 
-# Calculate the variance weighted by N (D)
-bim_uk_freq_filtered_SNP = (bim_uk_freq_filtered_SNP
-                            .withColumn("var_af", (2*f.col("MAF")*(1-f.col("MAF"))))
-                            .withColumn('D_neff', f.col("var_af") * f.col("n_total"))
-)
-
 # Filter for SNPs that have no more than 0.2 difference in the 
 # allele frequencies between the reference anf the summary stat.
 # I also filter out variants with allele frequencies lower than 1%
@@ -196,10 +141,12 @@ bim_uk_freq_filtered_SNP = (bim_uk_freq_filtered_SNP
                         .withColumn("diff_af", f.abs(f.col("MAF_sumstat")-f.col("MAF")))
                         .filter(f.col("diff_af")<0.2)
                         .filter(f.col("MAF")>0.01)
-                        .select("SNP" ,"pos","var_af","MAF","D_neff" ,"beta", "beta_cond", "se", "se_cond", "pval", "pval_cond", "n_total")
+                        .select("SNP" ,"pos","MAF","D_neff" ,"beta", "beta_cond", "se", "se_cond", "pval", "pval_cond", "n_total")
+                        .withColumn("var_af", (2*f.col("MAF")*(1-f.col("MAF"))))
+                        
                         .toPandas())
 
-
+var_y, bim_uk_freq_filtered_SNP = phenotype_and_neff_compute(bim_uk_freq_filtered_SNP)
 
 bim_uk_freq_filtered_SNP["SNP"].to_csv("test_data_single_window/variants_plink.csv", sep = " ", header = False)
 
@@ -268,8 +215,7 @@ while(np.any(best_SNP_pvalue<p_value_threshold) and iters < max_iter):
       best_SNPs_cond_tmp = np.append(row["SNP"], best_SNPs_cond)
       select_rows = bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"].isin(best_SNPs_cond_tmp)]
       betas_slct = np.array(select_rows["beta_cond"])
-      #D_neff_slct = np.array(select_rows["D_neff"])
-      MAF_select = np.array(select_rows["MAF"])
+      D_neff_slct = np.array(select_rows["D_neff"])
       SE_select = np.array(select_rows["se_cond"])
       N_slct = np.array(select_rows["n_total"])
       ld_matrix_slct_col = ld_matrix_names[best_SNPs_cond_tmp]
@@ -278,34 +224,24 @@ while(np.any(best_SNP_pvalue<p_value_threshold) and iters < max_iter):
       out = out_col.loc[out_col.index.isin(best_SNPs_cond_tmp)].values
 
       np.fill_diagonal(out,0) 
-      
       # if the SNPs considered has a R2 higher than 0.9 with any of the top variants its p-value is set to 1
-      
       if np.any(out>0.9):
-          #bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP['SNP'] != row["SNP"]]
           bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"pval_cond"] = 1
           continue
       
-      #sum_stat_filtered_SNP_tmp = join_sumstat_sojo(best_SNPs_cond_tmp, MAF_select, D_neff_slct, ld_matrix_slct, betas_slct, N_slct, SE_select, var_y)
-      #Exclude if we have a negative 
-      sum_stat_filtered_SNP_tmp = join_sumstat2(best_SNPs_cond_tmp, MAF_select, ld_matrix_slct,betas_slct, N_slct, SE_select)
-      if np.any(sum_stat_filtered_SNP_tmp == "collinearity"):
-        bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP['SNP'] != row["SNP"]]
-        continue
       ### In case the first joint algorithm is used I need account for collinearity. 
       # ideally I need to use the VIF function although here I use a try/except that is quicker
-      #try:
-      #  sum_stat_filtered_SNP_tmp = join_sumstat(best_SNPs_cond_tmp, D_neff_slct, ld_matrix_slct, var_y, betas_slct)
-      #except np.linalg.LinAlgError as err:
-      #    print("collinearity problem")
-      #    print(row["SNP"])
-      #    bim_uk_freq_filtered_SNP_bestpval_wind = bim_uk_freq_filtered_SNP_bestpval_wind.loc[bim_uk_freq_filtered_SNP_bestpval_wind['SNP'] != row["SNP"]]
-      #    continue
+      try:
+        sum_stat_filtered_SNP_tmp = join_sumstat(best_SNPs_cond_tmp, D_neff_slct, ld_matrix_slct, var_y, betas_slct)
+      except np.linalg.LinAlgError as err:
+          print("collinearity problem")
+          bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP['SNP'] != row["SNP"]]
+          continue
+          
       bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"beta_cond"] = sum_stat_filtered_SNP_tmp["beta_cond_tmp"][0]
       bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"se_cond"] = sum_stat_filtered_SNP_tmp["se_cond_tmp"][0]
       bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"pval_cond"] = sum_stat_filtered_SNP_tmp["pval_cond_tmp"][0]
 
-      #betas[best_SNPs_cond_tmp][0] = sum_stat_filtered_SNP_tmp["beta_cond_tmp"]
     print("end of cycle")
     
     #Here the selection of the best SNP is made again and the cycle is repeated
