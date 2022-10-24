@@ -135,7 +135,7 @@ bim_uk_freq_filtered_SNP = (bim_uk_freq_filtered_SNP
                         .withColumn("diff_af", f.abs(f.col("MAF_sumstat")-f.col("MAF")))
                         .filter(f.col("diff_af")<0.2)
                         .filter(f.col("MAF")>0.01)
-                        .select("SNP" ,"pos","var_af","MAF","beta", "beta_cond", "se", "se_cond", "pval", "pval_cond", "n_total")
+                        .select("SNP" ,"pos","MAF","beta", "beta_cond", "se", "se_cond", "pval", "pval_cond", "n_total")
                         .withColumn("var_af", (2*f.col("MAF")*(1-f.col("MAF"))))
                         .toPandas())
 
