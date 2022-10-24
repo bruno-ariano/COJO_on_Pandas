@@ -59,7 +59,7 @@ def select_best_SNP(df, variants_conditioned):
 
 
 ### This follow the guideline reported here (https://www.mv.helsinki.fi/home/mjxpirin/GWAS_course/material/GWAS9.pdf)
-def join_sumstat2(SNP, var_af_slct, LD_matrix, betas, N, SE):
+def join_sumstat(SNP, var_af_slct, LD_matrix, betas, N, SE):
   b = betas*var_af_slct
   #This equation is reported here (https://www.karger.com/Article/FullText/513303#ref4) as a way to compute the OLS.
   ls_sumstat = scipy.linalg.solve(LD_matrix, b) #computes scaled lambdas as R^-1 * b.s
@@ -223,7 +223,7 @@ while(np.any(best_SNP_pvalue<p_value_threshold) and iters < max_iter):
       
       #sum_stat_filtered_SNP_tmp = join_sumstat_sojo(best_SNPs_cond_tmp, MAF_select, D_neff_slct, ld_matrix_slct, betas_slct, N_slct, SE_select, var_y)
       #Exclude if we have a negative 
-      sum_stat_filtered_SNP_tmp = join_sumstat2(best_SNPs_cond_tmp, var_af_slct, ld_matrix_slct,betas_slct, N_slct, SE_select)
+      sum_stat_filtered_SNP_tmp = join_sumstat(best_SNPs_cond_tmp, var_af_slct, ld_matrix_slct,betas_slct, N_slct, SE_select)
       if np.any(sum_stat_filtered_SNP_tmp == "collinearity"):
         bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP['SNP'] != row["SNP"]]
         continue
