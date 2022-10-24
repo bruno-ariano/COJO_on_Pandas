@@ -42,26 +42,21 @@ def phenotype_and_neff_compute(data_ref):
   data_ref["neff"] = (vars - data_ref["var_af"] *data_ref["beta"]**2)/(data_ref["var_af"] *data_ref["se"]**2)
   return(vars,data_ref)
 
-#########
-# This function find the SNP with the lowest p-value in a dataset.
-# Given that the dataset is sorted before I just take the first row
-# after filtering for SNPs already conditioned
-
+#Select SNP with the lowest conditioned p-value
 def select_best_SNP(df, variants_conditioned):
   key_diff = set(df.SNP).difference(variants_conditioned.SNP)
   where_diff = df.SNP.isin(key_diff)
   df = df[where_diff]
   df_lowestp = df.loc[df["pval_cond"] == np.min(df["pval_cond"])]
+  
+  #if multiple variants are present with same p-value I select the first one
   if(df_lowestp.shape[0]>1):
       df_lowestp = df_lowestp.head(1)
-  #df = df.join(f.broadcast(variants_conditioned), on = ["SNP"], how = "left_anti")
-  #R = df.head(1)[0]
+
   best_SNP_pos = df_lowestp["pos"]
   best_SNP_ID = df_lowestp["SNP"]
   best_SNP_pvalue = df_lowestp["pval_cond"]
   best_SNP_pos = int(best_SNP_pos)
-  #best_SNP_conditioned = df.filter(f.col("pval") == best_SNP_pvalue).select("SNP")
-  #variants_conditioned = variants_conditioned.union(best_SNP_conditioned)
   variants_conditioned = pd.concat([variants_conditioned,df_lowestp])
   return [best_SNP_ID, best_SNP_pos, best_SNP_pvalue, variants_conditioned]
 
