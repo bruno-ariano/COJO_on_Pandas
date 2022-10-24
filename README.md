@@ -8,4 +8,8 @@ Most of the script is in python and need to be converted in pyspark.
 
 The script described run on a single window(+/- 2Mb) around a significant variant.
 
+In the tmp folder there is a prototype of the joint function as described in the coco package (https://github.com/theboocock/coco/tree/master/R) with some bugs fixed
+
+
+
 
