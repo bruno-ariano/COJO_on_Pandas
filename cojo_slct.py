@@ -144,9 +144,9 @@ bim_uk_freq_filtered_SNP = (bim_uk_freq_filtered_SNP
                             
 bim_uk_freq_filtered_SNP["SNP"].to_csv("test_data_single_window/variants_plink.csv", sep = " ", header = False)
 
-input_bfile = "/Users/ba13/Desktop/Open_Target_Genetics/creation_pipeline/COJO_on_SPARK/test_data_single_window/ukb_v3_chr1.downsampled10k_window"
-out_bfile= "/Users/ba13/Desktop/Open_Target_Genetics/creation_pipeline/COJO_on_SPARK/test_data_single_window/ukb_v3_chr1.downsampled10k_window_joint"
-variants = "/Users/ba13/Desktop/Open_Target_Genetics/creation_pipeline/COJO_on_SPARK/test_data_single_window/variants_plink.csv"
+input_bfile = "test_data_single_window/ukb_v3_chr1.downsampled10k_window"
+out_bfile= "test_data_single_window/ukb_v3_chr1.downsampled10k_window_joint"
+variants = "test_data_single_window/variants_plink.csv"
 
 cmd_bim_create = [
         'plink',
@@ -161,10 +161,10 @@ cmd_str = ' '.join([str(x) for x in cmd_bim_create])
 
 sp.call(cmd_str, shell=True)
 
-SNP_name_LD = pd.read_csv("/Users/ba13/Desktop/Open_Target_Genetics/creation_pipeline/COJO_on_SPARK/test_data_single_window/ukb_v3_chr1.downsampled10k_window_joint.bim", sep = "\t", names = ["chr","SNP","rec","pos","A1","A2"])
+SNP_name_LD = pd.read_csv("test_data_single_window/ukb_v3_chr1.downsampled10k_window_joint.bim", sep = "\t", names = ["chr","SNP","rec","pos","A1","A2"])
 
-bfile = "/Users/ba13/Desktop/Open_Target_Genetics/creation_pipeline/COJO_on_SPARK/test_data_single_window/ukb_v3_chr1.downsampled10k_window_joint"
-out_ld = "/Users/ba13/Desktop/Open_Target_Genetics/creation_pipeline/COJO_on_SPARK/test_data_single_window/LD_SNP_test"
+bfile = "test_data_single_window/ukb_v3_chr1.downsampled10k_window_joint"
+out_ld = "test_data_single_window/LD_SNP_test"
 
 cmd_ld_create = [
         'plink',
@@ -176,7 +176,7 @@ cmd_str = ' '.join([str(x) for x in cmd_ld_create])
 
 sp.call(cmd_str, shell=True)
 
-ld_matrix = np.loadtxt('/Users/ba13/Desktop/Open_Target_Genetics/creation_pipeline/COJO_on_SPARK/test_data_single_window/LD_SNP_test.ld')
+ld_matrix = np.loadtxt('test_data_single_window/LD_SNP_test.ld')
 ld_matrix_names = pd.DataFrame(ld_matrix, index=SNP_name_LD["SNP"], columns=SNP_name_LD["SNP"])
 
 # I select the SNP with the lowest p-value making sure that it wasn't selected previously.
