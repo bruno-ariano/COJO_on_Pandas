@@ -45,13 +45,14 @@ def phenotype_and_neff_compute(data_ref):
   #Note: Below equation 8 in the cojo paper, is how we estimate the trait variance. \cr
   #   y'y = D_j S_j^2 (n-1) + D_j B_j^2 \cr
   #   Trait variance taken as the median of the equation above
-  vars=data_ref["var_af"] *(data_ref["n_total"]) * data_ref["se"]**2 * (data_ref["n_total"] -1)  +  data_ref["var_af"] * (data_ref["n_total"]) * data_ref["betas"]**2
-  vars = (find_median(vars/(data_ref["n"]-1)))
+  
+  vars=data_ref["var_af"] *(data_ref["n_total"]) * data_ref["se"]**2  +  data_ref["var_af"] * (data_ref["n_total"]) * data_ref["beta"]**2
+  vars = (find_median(vars/(data_ref["n_total"]-1)))
   #Here is stored the function to calculate the phenotypic variance. 
   # In my case I assume this to be constant at 1.3 given previous calculation
   # I have made and what I have observed in other repositories
-  data_ref["neff"] = (vars - data_ref["var"] *data_ref["beta"]**2)/(data_ref["var_af"] *data_ref["se"]**2) + 1
-  return()
+  data_ref["neff"] = (vars - data_ref["var_af"] *data_ref["beta"]**2)/(data_ref["var_af"] *data_ref["se"]**2)
+  return(vars,data_ref)
 
 #########
 # This function find the SNP with the lowest p-value in a dataset.
@@ -120,7 +121,7 @@ def join_sumstat2(SNP, MAF, LD_matrix, betas, N, SE):
   ls_sumstat = scipy.linalg.solve(LD_matrix, b) #computes scaled lambdas as R^-1 * b.s
   sigma2_J_sumstat = find_median((b**2) + (N*sc*2*SE**2)) - np.dot(b.T, ls_sumstat)
   if np.any((sigma2_J_sumstat/N * np.diag(scipy.linalg.inv(LD_matrix))) <0):
-    return "collinearity"
+    return "negative variance"
   ls_se_sumstat = np.sqrt(sigma2_J_sumstat/N * np.diag(scipy.linalg.inv(LD_matrix))) #SEs of scaled lambdas 
   ls_sumstat = (ls_sumstat/sc)
   ls_se_sumstat = (ls_se_sumstat/sc)
@@ -267,7 +268,7 @@ while(np.any(best_SNP_pvalue<p_value_threshold) and iters < max_iter):
       best_SNPs_cond_tmp = np.append(row["SNP"], best_SNPs_cond)
       select_rows = bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"].isin(best_SNPs_cond_tmp)]
       betas_slct = np.array(select_rows["beta_cond"])
-      D_neff_slct = np.array(select_rows["D_neff"])
+      #D_neff_slct = np.array(select_rows["D_neff"])
       MAF_select = np.array(select_rows["MAF"])
       SE_select = np.array(select_rows["se_cond"])
       N_slct = np.array(select_rows["n_total"])
@@ -278,8 +279,7 @@ while(np.any(best_SNP_pvalue<p_value_threshold) and iters < max_iter):
 
       np.fill_diagonal(out,0) 
       
-      # if the SNPs considered has a R2 higher than 0.9 with any of the top variants this is excluded from
-      # further analysis
+      # if the SNPs considered has a R2 higher than 0.9 with any of the top variants its p-value is set to 1
       
       if np.any(out>0.9):
           #bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP['SNP'] != row["SNP"]]
@@ -287,6 +287,7 @@ while(np.any(best_SNP_pvalue<p_value_threshold) and iters < max_iter):
           continue
       
       #sum_stat_filtered_SNP_tmp = join_sumstat_sojo(best_SNPs_cond_tmp, MAF_select, D_neff_slct, ld_matrix_slct, betas_slct, N_slct, SE_select, var_y)
+      #Exclude if we have a negative 
       sum_stat_filtered_SNP_tmp = join_sumstat2(best_SNPs_cond_tmp, MAF_select, ld_matrix_slct,betas_slct, N_slct, SE_select)
       if np.any(sum_stat_filtered_SNP_tmp == "collinearity"):
         bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP['SNP'] != row["SNP"]]
