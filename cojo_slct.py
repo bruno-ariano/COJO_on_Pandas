@@ -7,15 +7,12 @@ from pyspark.sql import SparkSession
 import pyspark.sql.functions as f
 import pyspark.sql.types as t
 from pyspark import SparkConf
-from pyspark.context import SparkContext as c 
 import numpy as np
 import scipy.linalg
 import pandas as pd
 import scipy.stats
 import os
 import subprocess as sp
-import dask.array as da
-from statsmodels.stats.outliers_influence import variance_inflation_factor
 
   
 def find_median(values_list):
