@@ -13,6 +13,7 @@ import pandas as pd
 import scipy.stats
 import os
 import subprocess as sp
+import math
 
   
 def find_median(values_list):
@@ -59,22 +60,23 @@ def select_best_SNP(df, variants_conditioned):
 
 
 ### This follow the guideline reported here (https://www.mv.helsinki.fi/home/mjxpirin/GWAS_course/material/GWAS9.pdf)
-def join_sumstat(SNP, var_af_slct, LD_matrix, betas, N, SE):
-  b = betas*var_af_slct
+def join_sumstat2(SNP, var_af_slct, LD_matrix, betas, N, SE):
+  sc = np.sqrt(var_af_slct)
+  b = betas*sc
   #This equation is reported here (https://www.karger.com/Article/FullText/513303#ref4) as a way to compute the OLS.
   ls_sumstat = scipy.linalg.solve(LD_matrix, b) #computes scaled lambdas as R^-1 * b.s
-  sigma2_J_sumstat = find_median((b**2) + (N*var_af_slct*2*SE**2)) - np.dot(b.T, ls_sumstat)
+  sigma2_J_sumstat = find_median((b**2) + (N*sc**2*SE**2)) - np.dot(b.T, ls_sumstat)
   if np.any((sigma2_J_sumstat/N * np.diag(scipy.linalg.inv(LD_matrix))) <0):
     return "negative variance"
   ls_se_sumstat = np.sqrt(sigma2_J_sumstat/N * np.diag(scipy.linalg.inv(LD_matrix))) #SEs of scaled lambdas 
-  ls_sumstat = (ls_sumstat/var_af_slct)
-  ls_se_sumstat = (ls_se_sumstat/var_af_slct)
-  
+  ls_sumstat = (ls_sumstat/sc)
+  ls_se_sumstat = (ls_se_sumstat/sc)
   new_z = (np.abs(ls_sumstat/ls_se_sumstat))
   new_pval = scipy.stats.norm.sf(abs(new_z))*2
   d = {"SNP": SNP, "beta_cond_tmp": ls_sumstat, "se_cond_tmp" : ls_se_sumstat, "pval_cond_tmp":new_pval}
   res_data = pd.DataFrame.from_dict(d)
-  return res_data[res_data["SNP"]==SNP[0]]
+
+  return res_data
 
 
 # The only measures that needs to be calculated is the the 
@@ -104,15 +106,15 @@ schema_freq = t.StructType([
     t.StructField("POS",t.StringType(),True), 
   ])
 
-bim_uk = spark.read.format("csv").load("test_data_single_window/ukb_v3_chr1.downsampled10k_window.reshaped.bim", sep = ",", schema = schema_bim)
+bim_uk = spark.read.format("csv").load("file:///home/ba13/COJO_on_SPARK/ukb_v3_chr1.downsampled10k_window.reshaped.bim", sep = ",", schema = schema_bim)
 
 # The allele frequencies are pre-calculated using plink on the entire reference chromosome.
-freq_uk = spark.read.format("csv").load("test_data/ukb_v3_chr1.downsampled10k.reshaped.frq", sep = ",", schema = schema_freq)
+freq_uk = spark.read.format("csv").load("file:///home/ba13/COJO_on_SPARK/ukb_v3_chr1.downsampled10k.reshaped.frq", sep = ",", schema = schema_freq)
 freq_uk = freq_uk.select("SNP", "MAF")
 bim_uk_freq = bim_uk.join(freq_uk, on = ["SNP"])
 
 ### load sumstat
-sumstat = spark.read.format("parquet").load("test_data/GCST002222.parquet")
+sumstat = spark.read.format("parquet").load("file:///home/ba13/COJO_on_SPARK/GCST002222.parquet")
 sumstat = (sumstat
           .withColumn("SNP", f.concat_ws(":", f.col("chrom"), f.col("pos"), f.col("ref"), f.col("alt")))
           .withColumn("MAF_sumstat", f.when(f.col("eaf")>0.5, 1-f.col("eaf")).otherwise(f.col("eaf")))
@@ -138,45 +140,11 @@ bim_uk_freq_filtered_SNP = (bim_uk_freq_filtered_SNP
                         .select("SNP" ,"pos","MAF","beta", "beta_cond", "se", "se_cond", "pval", "pval_cond", "n_total")
                         .withColumn("var_af", (2*f.col("MAF")*(1-f.col("MAF"))))
                         .toPandas())
+        
+SNP_name_LD = pd.read_csv("file:///home/ba13/COJO_on_SPARK/ukb_v3_chr1.downsampled10k_window_joint.bim", sep = "\t", names = ["chr","SNP","rec","pos","A1","A2"])
 
 
-#### At this point I need to create a matrix with the LD information
-                            
-bim_uk_freq_filtered_SNP["SNP"].to_csv("test_data_single_window/variants_plink.csv", sep = " ", header = False)
-
-input_bfile = "test_data_single_window/ukb_v3_chr1.downsampled10k_window"
-out_bfile= "test_data_single_window/ukb_v3_chr1.downsampled10k_window_joint"
-variants = "test_data_single_window/variants_plink.csv"
-
-cmd_bim_create = [
-        'plink',
-        '--bfile', input_bfile,
-        '--extract',  variants,
-        '--allow-extra-chr',
-        '--make-bed',
-        '--out', out_bfile
-    ]
-
-cmd_str = ' '.join([str(x) for x in cmd_bim_create])
-
-sp.call(cmd_str, shell=True)
-
-SNP_name_LD = pd.read_csv("test_data_single_window/ukb_v3_chr1.downsampled10k_window_joint.bim", sep = "\t", names = ["chr","SNP","rec","pos","A1","A2"])
-
-bfile = "test_data_single_window/ukb_v3_chr1.downsampled10k_window_joint"
-out_ld = "test_data_single_window/LD_SNP_test"
-
-cmd_ld_create = [
-        'plink',
-        '--bfile', bfile,
-        '--out', out_ld,
-        '--r2 square'
-    ]
-cmd_str = ' '.join([str(x) for x in cmd_ld_create])
-
-sp.call(cmd_str, shell=True)
-
-ld_matrix = np.loadtxt('test_data_single_window/LD_SNP_test.ld')
+ld_matrix = np.loadtxt('LD_SNP_test.ld')
 ld_matrix_names = pd.DataFrame(ld_matrix, index=SNP_name_LD["SNP"], columns=SNP_name_LD["SNP"])
 
 # I select the SNP with the lowest p-value making sure that it wasn't selected previously.
@@ -188,7 +156,6 @@ best_SNP_ID, best_SNP_pos, best_SNP_pvalue, variants_conditioned =  select_best_
 
 best_SNPs_cond = np.empty((0,1), str)
 best_SNPs_cond = np.append(best_SNPs_cond, best_SNP_ID)
-
 
 # In this particular script the LD window is created only once and used as a reference for each iteration
 # When the whole summary stat is taken then a bigger LD matrix need to be consulted using a Hail table
@@ -207,30 +174,33 @@ while(np.any(best_SNP_pvalue<p_value_threshold) and iters < max_iter):
       var_af_slct = np.array(select_rows["var_af"])               
       SE_select = np.array(select_rows["se_cond"])
       N_slct = np.array(select_rows["n_total"])
-      ld_matrix_slct_col = ld_matrix_names[best_SNPs_cond_tmp]
-      ld_matrix_slct = ld_matrix_slct_col.loc[ld_matrix_slct_col.index.isin(best_SNPs_cond_tmp)].values
-      out_col = ld_matrix_names[best_SNPs_cond_tmp]
-      out = out_col.loc[out_col.index.isin(best_SNPs_cond_tmp)].values
-
-      np.fill_diagonal(out,0) 
+      SNPs_slct = np.array(select_rows["SNP"])
+      ld_matrix_slct_col = ld_matrix_names[select_rows["SNP"]]
+      ld_matrix_slct = ld_matrix_slct_col.loc[select_rows["SNP"]].values
+      out_col = ld_matrix_names[select_rows["SNP"]]
+      out = out_col.loc[select_rows["SNP"]].values
+      np.fill_diagonal(out,0)
       
       # if the SNPs considered has a R2 higher than 0.9 with any of the top variants its p-value is set to 1
       
       if np.any(out>0.9):
-          #bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP['SNP'] != row["SNP"]]
           bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"pval_cond"] = 1
+          #bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP['SNP'] != row["SNP"]]
           continue
       
       #sum_stat_filtered_SNP_tmp = join_sumstat_sojo(best_SNPs_cond_tmp, MAF_select, D_neff_slct, ld_matrix_slct, betas_slct, N_slct, SE_select, var_y)
       #Exclude if we have a negative 
-      sum_stat_filtered_SNP_tmp = join_sumstat(best_SNPs_cond_tmp, var_af_slct, ld_matrix_slct,betas_slct, N_slct, SE_select)
-      if np.any(sum_stat_filtered_SNP_tmp == "collinearity"):
+      sum_stat_filtered_SNP_tmp = join_sumstat2(SNPs_slct, var_af_slct, ld_matrix_slct,betas_slct, N_slct, SE_select)
+      
+      if np.any(sum_stat_filtered_SNP_tmp == "negative variance"):
         bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP['SNP'] != row["SNP"]]
         continue
-                            
-      bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"beta_cond"] = sum_stat_filtered_SNP_tmp["beta_cond_tmp"][0]
-      bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"se_cond"] = sum_stat_filtered_SNP_tmp["se_cond_tmp"][0]
-      bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"pval_cond"] = sum_stat_filtered_SNP_tmp["pval_cond_tmp"][0]
+      if math.isnan(sum_stat_filtered_SNP_tmp.loc[sum_stat_filtered_SNP_tmp["SNP"] == row["SNP"],"pval_cond_tmp"]):
+        print(sum_stat_filtered_SNP_tmp)
+        print(best_SNPs_cond_tmp)
+      bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"beta_cond"] = np.array(sum_stat_filtered_SNP_tmp.loc[sum_stat_filtered_SNP_tmp["SNP"] == row["SNP"],"beta_cond_tmp"])[0]
+      bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"se_cond"] = np.array(sum_stat_filtered_SNP_tmp.loc[sum_stat_filtered_SNP_tmp["SNP"] == row["SNP"],"se_cond_tmp"])[0]
+      bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"pval_cond"] = np.array(sum_stat_filtered_SNP_tmp.loc[sum_stat_filtered_SNP_tmp["SNP"] == row["SNP"],"pval_cond_tmp"])[0]
 
     print("end of cycle")
     
@@ -241,6 +211,3 @@ while(np.any(best_SNP_pvalue<p_value_threshold) and iters < max_iter):
     print(iters)
 
 bim_uk_freq_filtered_SNP_final = bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["pval_cond"]<5e-08]
-bim_uk_freq_filtered_SNP_final = bim_uk_freq_filtered_SNP_final.loc[bim_uk_freq_filtered_SNP_final["pval_cond"] != 1]
-
-#bim_uk_freq_filtered_SNP_final.repartition(1).write.format("csv").save("test_data_single_window/cojo_out/GCST002222_cojo_on_spark")
