@@ -60,7 +60,7 @@ def select_best_SNP(df, variants_conditioned):
 
 
 ### This follow the guideline reported here (https://www.mv.helsinki.fi/home/mjxpirin/GWAS_course/material/GWAS9.pdf)
-def join_sumstat2(SNP, var_af_slct, LD_matrix, betas, N, SE):
+def join_sumstat(SNP, var_af_slct, LD_matrix, betas, N, SE):
   sc = np.sqrt(var_af_slct)
   b = betas*sc
   #This equation is reported here (https://www.karger.com/Article/FullText/513303#ref4) as a way to compute the OLS.
@@ -182,16 +182,13 @@ while(np.any(best_SNP_pvalue<p_value_threshold) and iters < max_iter):
       np.fill_diagonal(out,0)
       
       # if the SNPs considered has a R2 higher than 0.9 with any of the top variants its p-value is set to 1
-      
       if np.any(out>0.9):
           bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"pval_cond"] = 1
-          #bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP['SNP'] != row["SNP"]]
           continue
       
-      #sum_stat_filtered_SNP_tmp = join_sumstat_sojo(best_SNPs_cond_tmp, MAF_select, D_neff_slct, ld_matrix_slct, betas_slct, N_slct, SE_select, var_y)
-      #Exclude if we have a negative 
-      sum_stat_filtered_SNP_tmp = join_sumstat2(SNPs_slct, var_af_slct, ld_matrix_slct,betas_slct, N_slct, SE_select)
       
+      sum_stat_filtered_SNP_tmp = join_sumstat(SNPs_slct, var_af_slct, ld_matrix_slct,betas_slct, N_slct, SE_select)
+      #Exclude if we have a negative 
       if np.any(sum_stat_filtered_SNP_tmp == "negative variance"):
         bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP['SNP'] != row["SNP"]]
         continue
