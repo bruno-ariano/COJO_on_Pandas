@@ -1,11 +1,12 @@
 # COJO_on_SPARK
 
-joint analysis with pyspark.
+## joint analysis with pyspark using LD information.
 
-The script implement the joint analysis using the algebra described here (https://www.mv.helsinki.fi/home/mjxpirin/GWAS_course/material/GWAS9.html)
+The script implemented is a modified version of the COJO algorithm that uses only LD matrices. The match between the results is almost 1:1
 
-Most of the script is in python and need to be converted in pyspark.
+Most of the script is in python and will be converted in pyspark.
 
-The script described run on a single window(+/- 2Mb) around a significant variant.
+The script described run on an example window of 4 Mb in size.
+
 
 
