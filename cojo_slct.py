@@ -73,23 +73,31 @@ def select_best_SNP(df, variants_conditioned):
 
 #This version of the function is the same adopted in the gcta cojo software
 def join_sumstat_gcta(SNP,var_af, LD_matrix, var_y, betas,N_eff):
-  # Here I assume Dw * WW' * Dw explained in the paper can be approximated by the LD matrix
+  # Here I assume Dw * WW' * Dw explained in the paper
+  # can be approximated by the LD correlation following what published here (insert link)
+  #B = np.dot(np.dot(np.sqrt(np.diag(var_af).astype(float)), LD_matrix.astype(float)), np.sqrt(np.diag(var_af).astype(float)))
+  #new_betas = np.dot(np.dot(np.linalg.inv(B * N_eff), np.diag(var_af  * min(N_eff))), betas)
   N_eff_min = min(N_eff)
-  B = np.dot(np.dot(np.sqrt(np.diag(var_af * N_eff_min).astype(float)), LD_matrix.astype(float)), np.sqrt(np.diag(var_af * N_eff_min).astype(float)))
-  new_betas = np.dot(np.linalg.inv(B), np.dot(np.diag(var_af * N_eff_min), betas))
+  B = np.dot(np.dot(np.sqrt(np.diag(var_af).astype(float)), LD_matrix.astype(float)), np.sqrt(np.diag(var_af).astype(float)))
+  for j in range(B.shape[1]):
+    for k in range(j,B.shape[1]):
+      B[j,k] = min(N_eff[j], N_eff[k]) *  B[j,k]
+      if k!=j :
+          B[k,j] = min(N_eff[j], N_eff[k]) * B[k,j]
+         
+  new_betas = np.dot(np.linalg.inv(B), np.dot(np.diag(var_af * N_eff), betas))
   
-  # alternative way to compute the se
+  #Alternative way for calculating joint se
+  
   #sigma_joint = np.abs((var_y - np.dot(var_af , new_betas**2))/(len(SNP)-1))
   #new_se = np.sqrt(np.diag(((sigma_joint) * np.linalg.inv(B))/(N_eff-2)))
-  #new_se = np.sqrt(np.diag(((var_y) * np.linalg.inv(B *  N_eff))))
+  
   
   new_se = np.sqrt(np.diag(((var_y) * np.linalg.inv(B))))
-
   new_z = (np.abs(new_betas/new_se))
-  new_pval = scipy.stats.norm.sf(abs(new_z))
+  new_pval = scipy.stats.chi2.sf((new_z**2), len(SNP))
   d = {"SNP": SNP, "beta_cond_tmp": new_betas, "se_cond_tmp" : new_se, "pval_cond_tmp":new_pval }
   res_data = pd.DataFrame.from_dict(d)
-  #I am just interested in the first snp from the joint analysis
   return res_data[res_data["SNP"]==SNP[0]]
 
 p_value_threshold = 5e-8
