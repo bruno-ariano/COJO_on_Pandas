@@ -23,11 +23,6 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 ##########
 # This function is for dealing with multicollinearity problems.  
 # The function it self take long type for computation. 
-
-def calc_VIF(x):
-  vif= pd.DataFrame()
-  vif["VIF"]=[variance_inflation_factor(x.values,i) for i in range(x.shape[1])]
-  vif['variables']=x.columns
   
 def find_median(values_list):
   median = np.median(values_list)
@@ -244,11 +239,19 @@ while(np.any(best_SNP_pvalue<p_value_threshold) and iters < max_iter):
       SE_select = np.array(select_rows["se"])
       N_slct = np.array(select_rows["neff"])
       ld_matrix_slct = ld_matrix_names[best_SNPs_cond_tmp].loc[best_SNPs_cond_tmp]
-      out = ld_matrix_names[best_SNPs_cond_tmp].loc[best_SNPs_cond_tmp]
+      
+      #Deal with collinearity
+      
+      if (np.linalg.det(ld_matrix_slct) < 0.01) :
+          bim_uk_freq_filtered_SNP = bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP['SNP'] != SNP_to_condition]
+          continue
+
+      
+      out = ld_matrix_slct.copy()
       np.fill_diagonal(out.values,0) 
       
       # if the SNPs considered has a R2 higher than 0.9 with any of the top variants I set the p-value to 1 (gcta suggestion)
-      if (np.any((out**2)> 0.9):
+      if (np.any(out > 0.9)  or np.any(out< -0.9)) :
           bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"pval_cond"] = 1
           continue
       
