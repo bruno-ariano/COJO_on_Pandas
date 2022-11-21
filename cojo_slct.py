@@ -71,12 +71,37 @@ def select_best_SNP(df, variants_conditioned):
   return [best_SNP_ID, best_SNP_pos, best_SNP_pvalue, variants_conditioned]
 
 
-#This version of the function is the same adopted in the gcta cojo software
+
+#Conditional analysis as it was made in GCTA COJO
+def conditional_gcta(SNP, LD_matrix, var_y, betas, var_af, N_eff):
+  B = np.dot(np.dot(np.sqrt(np.diag(var_af).astype(float)), LD_matrix.astype(float)), np.sqrt(np.diag(var_af).astype(float)))
+  for j in range(B.shape[1]):
+    for k in range(j,B.shape[1]):
+      B[j,k] = min(N_eff[j], N_eff[k]) *  B[j,k]
+      if k!=j :
+          B[k,j] = min(N_eff[j], N_eff[k]) * B[k,j]
+  B_1 = B[1:B.shape[1],1:B.shape[1]]
+  B_1_inv = np.linalg.inv(B_1)
+  B_2 = B[0,0]
+  B_2_inv = np.linalg.inv(np.diag([B_2]))[0][0]
+  B_2_cond = betas[0]
+  x2_x1 = B[0,1: B.shape[1]]
+  if((len(betas) - 1) == 1):
+    diag_one = (var_af*N_eff)[1:len((SNP))]
+  else:
+    diag_one = np.diag((var_af*N_eff)[1:len(SNP)])
+  B_2_cond_residuals = np.dot(np.dot(np.dot(np.dot(B_2_inv, x2_x1) ,B_1_inv) , diag_one), betas[1:len(SNP)])
+  new_betas = B_2_cond - B_2_cond_residuals
+  new_se = np.sqrt(var_y * B_2_inv)
+  new_z = (np.abs(new_betas/new_se))
+  new_pval = scipy.stats.chi2.sf((new_z**2), 1)
+  conditional_results = pd.DataFrame(data = [[SNP[0],new_betas, new_se, new_pval]], columns=["SNP", "beta_cond_tmp", "se_cond_tmp", "pval_cond_tmp"])
+
+  return conditional_results
+
+# Joint analysis as it was made in GCTA COJO
 def join_sumstat_gcta(SNP,var_af, LD_matrix, var_y, betas,N_eff):
   # Here I assume Dw * WW' * Dw explained in the paper
-  # can be approximated by the LD correlation following what published here (insert link)
-  #B = np.dot(np.dot(np.sqrt(np.diag(var_af).astype(float)), LD_matrix.astype(float)), np.sqrt(np.diag(var_af).astype(float)))
-  #new_betas = np.dot(np.dot(np.linalg.inv(B * N_eff), np.diag(var_af  * min(N_eff))), betas)
   N_eff_min = min(N_eff)
   B = np.dot(np.dot(np.sqrt(np.diag(var_af).astype(float)), LD_matrix.astype(float)), np.sqrt(np.diag(var_af).astype(float)))
   for j in range(B.shape[1]):
@@ -98,7 +123,7 @@ def join_sumstat_gcta(SNP,var_af, LD_matrix, var_y, betas,N_eff):
   new_pval = scipy.stats.chi2.sf((new_z**2), len(SNP))
   d = {"SNP": SNP, "beta_cond_tmp": new_betas, "se_cond_tmp" : new_se, "pval_cond_tmp":new_pval }
   res_data = pd.DataFrame.from_dict(d)
-  return res_data[res_data["SNP"]==SNP[0]]
+  return res_data
 
 p_value_threshold = 5e-8
 max_iter = 100
@@ -227,14 +252,26 @@ while(np.any(best_SNP_pvalue<p_value_threshold) and iters < max_iter):
           bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"pval_cond"] = 1
           continue
       
-      sum_stat_filtered_SNP_tmp = join_sumstat_gcta(best_SNPs_cond_tmp, var_af_select, ld_matrix_slct,var_y, betas_slct, N_slct)
-      bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"beta_cond"] = sum_stat_filtered_SNP_tmp["beta_cond_tmp"][0]
-      bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"se_cond"] = sum_stat_filtered_SNP_tmp["se_cond_tmp"][0]
-      bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"pval_cond"] = sum_stat_filtered_SNP_tmp["pval_cond_tmp"][0]
+      #Conditional analysis
+      sum_stat_filtered_SNP_tmp = conditional_gcta(variants_conditioned_tmp.SNP.values,ld_matrix_slct,var_y, variants_conditioned_tmp.beta.values, variants_conditioned_tmp.var_af.values, variants_conditioned_tmp.neff.values)
+      bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == SNP_to_condition,["beta_cond","se_cond", "pval_cond"]] = sum_stat_filtered_SNP_tmp[["beta_cond_tmp", "se_cond_tmp", "pval_cond_tmp"]].values
+
+      #bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"beta_cond"] = sum_stat_filtered_SNP_tmp["beta_cond_tmp"][0]
+      #bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"se_cond"] = sum_stat_filtered_SNP_tmp["se_cond_tmp"][0]
+      #bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"pval_cond"] = sum_stat_filtered_SNP_tmp["pval_cond_tmp"][0]
     
     print("end of cycle")
     #Here the selection of the best SNP is made again and the cycle is repeated
     best_SNP_ID, best_SNP_pos, best_SNP_pvalue, variants_conditioned =  select_best_SNP(bim_uk_freq_filtered_SNP, variants_conditioned)
+    
+    #Prepare for joint analysis
+    var_y, variants_conditioned = phenotype_and_neff_compute(variants_conditioned)
+    ld_matrix_slct = ld_matrix_names[variants_conditioned.SNP].loc[variants_conditioned.SNP]
+    sum_stat_filtered_SNP_tmp = join_sumstat_gcta(variants_conditioned.SNP.values, variants_conditioned.var_af.values, ld_matrix_slct,var_y, variants_conditioned.beta.values, variants_conditioned.neff.values)
+    
+    #Filter if any of the p-values after joint analysis is not significant
+    filtered_sumstat = (sum_stat_filtered_SNP_tmp[sum_stat_filtered_SNP_tmp["pval_cond_tmp"]< 5e-8]["SNP"])
+    best_SNPs_cond = filtered_sumstat.to_numpy()
     best_SNPs_cond = np.append(best_SNP_ID, best_SNPs_cond)
     iters = iters+1
     print(iters)
