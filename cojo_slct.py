@@ -115,7 +115,7 @@ def join_sumstat_gcta(SNP,var_af, LD_matrix, var_y, betas,N_eff):
   
   new_se = np.sqrt(np.diag(((var_y) * np.linalg.inv(B))))
   new_z = (np.abs(new_betas/new_se))
-  new_pval = scipy.stats.chi2.sf((new_z**2), len(SNP))
+  new_pval = scipy.stats.chi2.sf((new_z**2), 1)
   d = {"SNP": SNP, "beta_cond_tmp": new_betas, "se_cond_tmp" : new_se, "pval_cond_tmp":new_pval }
   res_data = pd.DataFrame.from_dict(d)
   return res_data
