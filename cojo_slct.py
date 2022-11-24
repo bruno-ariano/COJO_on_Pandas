@@ -32,22 +32,17 @@ med_find=f.udf(find_median,t.FloatType())
 
 
 # This function is used only for calculating the phenotype variance and the effective population size(though in general pops in GWAS are panmitic).
-# Here I assume this is constant at 1.3. The real values looks like are not
-# distant from this default.
 
 def phenotype_and_neff_compute(data_ref):
-  # Note: Below equation 8 in the cojo paper, is how we estimate the trait variance. \cr
+  # Note: Below equation 8 in the cojo paper, is how the trait variance is estimated.
   # y'y = D_j S_j^2 (n-1) + D_j B_j^2 \cr
-  # Trait variance taken as the median of the equation above
   vars= (data_ref["var_af"] *(data_ref["n_total"]) * data_ref["se"]**2  +  data_ref["var_af"] * data_ref["beta"]**2)
   vars = find_median(vars)
   data_ref["neff"] = (vars/(data_ref["var_af"] *data_ref["se"]**2)) - (((data_ref["beta"]**2))/data_ref["se"]**2)
   return(vars,data_ref)
 
 
-# This function find the SNP with the lowest p-value in a dataset.
-# Given that the dataset is sorted before I just take the first row
-# after filtering for SNPs already conditioned
+# This function find the SNP with the lowest p-value in a dataset making sure it was not conditioned before
 
 def select_best_SNP(df, variants_conditioned):
   key_diff = set(df.SNP).difference(variants_conditioned.SNP)
@@ -68,6 +63,7 @@ def select_best_SNP(df, variants_conditioned):
 
 
 #Conditional analysis as it was made in GCTA COJO
+
 def conditional_gcta(SNP, LD_matrix, var_y, betas, var_af, N_eff):
   B = np.dot(np.dot(np.sqrt(np.diag(var_af).astype(float)), LD_matrix.astype(float)), np.sqrt(np.diag(var_af).astype(float)))
   for j in range(B.shape[1]):
@@ -94,7 +90,9 @@ def conditional_gcta(SNP, LD_matrix, var_y, betas, var_af, N_eff):
 
   return conditional_results
 
+
 # Joint analysis as it was made in GCTA COJO
+
 def join_sumstat_gcta(SNP,var_af, LD_matrix, var_y, betas,N_eff):
   # Here I assume Dw * WW' * Dw explained in the paper
   N_eff_min = min(N_eff)
@@ -112,7 +110,6 @@ def join_sumstat_gcta(SNP,var_af, LD_matrix, var_y, betas,N_eff):
   #sigma_joint = np.abs((var_y - np.dot(var_af , new_betas**2))/(len(SNP)-1))
   #new_se = np.sqrt(np.diag(((sigma_joint) * np.linalg.inv(B))/(N_eff-2)))
   
-  
   new_se = np.sqrt(np.diag(((var_y) * np.linalg.inv(B))))
   new_z = (np.abs(new_betas/new_se))
   new_pval = scipy.stats.chi2.sf((new_z**2), 1)
@@ -122,6 +119,9 @@ def join_sumstat_gcta(SNP,var_af, LD_matrix, var_y, betas,N_eff):
 
 p_value_threshold = 5e-8
 max_iter = 100
+
+
+
 
 #establish spark connection
 spark = SparkSession.builder.config("some_config", "some_value").master("local[*]").getOrCreate()
@@ -160,10 +160,11 @@ sumstat = (sumstat
           .select("SNP","beta","MAF_sumstat","se","pval","n_total", "eaf", "ref", "alt")
 )
 
-### Consider only SNP that overlap between the summary stat and the reference
+# Consider only SNP that overlap between the summary stat and the reference
 bim_uk_freq_filtered_SNP = bim_uk_freq.join(sumstat, on = ["SNP"], how = "inner")
 
-### Various filtering and calculation of parameters
+
+# Various filtering and calculation of parameters
 
 # Calculate the allele frequency variance
 bim_uk_freq_filtered_SNP = (bim_uk_freq_filtered_SNP
@@ -195,7 +196,7 @@ schema_SNP_bim = t.StructType([
 
 
 
-#load the LD matrix
+# load the LD matrix
 ld_matrix = np.loadtxt('/Users/ba13/Desktop/Open_Target_Genetics/creation_pipeline/COJO_on_SPARK/test_data_single_window/LD_SNP_test.ld')
 ld_matrix_names = pd.DataFrame(ld_matrix, index=SNP_name_LD["SNP"], columns=SNP_name_LD["SNP"])
 
@@ -209,7 +210,7 @@ ld_matrix_names[SNP_switch["SNP"]] = ld_matrix_names[SNP_switch["SNP"]]*-1
 ld_matrix_names.loc[SNP_switch["SNP"]] = ld_matrix_names.loc[SNP_switch["SNP"]]*-1
 
 
-#Here I calculate the pehontypic variance and the sample size
+# Here I calculate the pehontypic variance and the sample size
 var_y, bim_uk_freq_filtered_SNP = phenotype_and_neff_compute(bim_uk_freq_filtered_SNP)
 
 # I select the SNP with the lowest p-value making sure that it wasn't selected previously.
@@ -259,10 +260,6 @@ while(np.any(best_SNP_pvalue<p_value_threshold) and iters < max_iter):
       sum_stat_filtered_SNP_tmp = conditional_gcta(variants_conditioned_tmp.SNP.values,ld_matrix_slct,var_y, variants_conditioned_tmp.beta.values, variants_conditioned_tmp.var_af.values, variants_conditioned_tmp.neff.values)
       bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == SNP_to_condition,["beta_cond","se_cond", "pval_cond"]] = sum_stat_filtered_SNP_tmp[["beta_cond_tmp", "se_cond_tmp", "pval_cond_tmp"]].values
 
-      #bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"beta_cond"] = sum_stat_filtered_SNP_tmp["beta_cond_tmp"][0]
-      #bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"se_cond"] = sum_stat_filtered_SNP_tmp["se_cond_tmp"][0]
-      #bim_uk_freq_filtered_SNP.loc[bim_uk_freq_filtered_SNP["SNP"] == row["SNP"],"pval_cond"] = sum_stat_filtered_SNP_tmp["pval_cond_tmp"][0]
-    
     print("end of cycle")
     #Here the selection of the best SNP is made again and the cycle is repeated
     best_SNP_ID, best_SNP_pos, best_SNP_pvalue, variants_conditioned =  select_best_SNP(bim_uk_freq_filtered_SNP, variants_conditioned)
